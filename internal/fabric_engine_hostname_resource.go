@@ -204,21 +204,20 @@ func (r *FabricEngineHostnameResource) Read(
 		return
 	}
 
-	// Connect via SSH.
-	config := &ssh.ClientConfig{
+	cfg := &ssh.ClientConfig{
 		User:            r.client.Username,
 		Auth:            []ssh.AuthMethod{ssh.Password(r.client.Password)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
+
 	address := fmt.Sprintf("%s:%d", r.client.Host, r.client.Port)
-	client, err := ssh.Dial("tcp", address, config)
+	client, err := ssh.Dial("tcp", address, cfg)
 	if err != nil {
 		resp.Diagnostics.AddError("SSH connection error", err.Error())
 		return
 	}
 	defer client.Close()
 
-	// Run "show sys-info" and capture the output.
 	session, err := client.NewSession()
 	if err != nil {
 		resp.Diagnostics.AddError("Cannot create SSH session", err.Error())
@@ -226,23 +225,70 @@ func (r *FabricEngineHostnameResource) Read(
 	}
 	defer session.Close()
 
-	output, err := session.Output("show sys-info")
+	stdin, err := session.StdinPipe()
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to run show sys-info", err.Error())
+		resp.Diagnostics.AddError("Cannot get stdin pipe", err.Error())
+		return
+	}
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		resp.Diagnostics.AddError("Cannot get stdout pipe", err.Error())
+		return
+	}
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		resp.Diagnostics.AddError("Cannot get stderr pipe", err.Error())
 		return
 	}
 
-	// Parse the SysName from the command output.
+	if err := session.Shell(); err != nil {
+		resp.Diagnostics.AddError("Failed to start remote shell", err.Error())
+		return
+	}
+
+	var output string
+	go func() {
+		scanner := bufio.NewScanner(io.MultiReader(stdout, stderr))
+		for scanner.Scan() {
+			line := scanner.Text()
+			output += line + "\n"
+		}
+	}()
+
+	send := func(cmd string) error {
+		_, err := fmt.Fprintf(stdin, "%s\n", cmd)
+		return err
+	}
+
+	if err := send("enable"); err != nil {
+		resp.Diagnostics.AddError("SSH command failed", "enable failed: "+err.Error())
+		return
+	}
+	if err := send("show sys-info"); err != nil {
+		resp.Diagnostics.AddError("SSH command failed", "show sys-info failed: "+err.Error())
+		return
+	}
+	if err := send("exit"); err != nil {
+		resp.Diagnostics.AddError("SSH command failed", "exit failed: "+err.Error())
+		return
+	}
+
+	if err := session.Wait(); err != nil {
+		if !strings.Contains(err.Error(), "exited without exit status") {
+			resp.Diagnostics.AddError("SSH session wait error", err.Error())
+			return
+		}
+	}
+
 	re := regexp.MustCompile(`SysName\s+:\s+(\S+)`)
-	matches := re.FindStringSubmatch(string(output))
+	matches := re.FindStringSubmatch(output)
 	if len(matches) == 2 {
 		state.Hostname = types.StringValue(matches[1])
 		state.ID = state.Hostname
 	} else {
-		resp.Diagnostics.AddWarning("Hostname not found", "Could not parse SysName from show sys-info output")
+		resp.Diagnostics.AddWarning("Hostname not found", "Could not find SysName in output:\n"+output)
 	}
 
-	// Save the updated state.
 	diags = resp.State.Set(ctx, state)
 	resp.Diagnostics.Append(diags...)
 }
