@@ -1,8 +1,10 @@
 package provider
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"regexp"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -70,22 +72,21 @@ func (r *FabricEngineHostnameResource) Create(
 		return
 	}
 
-	// Build an SSH client configuration.
-	config := &ssh.ClientConfig{
+	// SSH client configuration
+	cfg := &ssh.ClientConfig{
 		User:            r.client.Username,
 		Auth:            []ssh.AuthMethod{ssh.Password(r.client.Password)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
-	// Dial the device.
 	address := fmt.Sprintf("%s:%d", r.client.Host, r.client.Port)
-	client, err := ssh.Dial("tcp", address, config)
+	client, err := ssh.Dial("tcp", address, cfg)
 	if err != nil {
 		resp.Diagnostics.AddError("SSH connection error", err.Error())
 		return
 	}
 	defer client.Close()
 
-	// Run the "sys name" command to set the hostname.
+	// Start an interactive shell
 	session, err := client.NewSession()
 	if err != nil {
 		resp.Diagnostics.AddError("Cannot create SSH session", err.Error())
@@ -93,13 +94,63 @@ func (r *FabricEngineHostnameResource) Create(
 	}
 	defer session.Close()
 
-	cmd := fmt.Sprintf("sys name %s", plan.Hostname.ValueString())
-	if err := session.Run(cmd); err != nil {
-		resp.Diagnostics.AddError("Command execution failed", err.Error())
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		resp.Diagnostics.AddError("Cannot get stdin pipe", err.Error())
+		return
+	}
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		resp.Diagnostics.AddError("Cannot get stdout pipe", err.Error())
+		return
+	}
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		resp.Diagnostics.AddError("Cannot get stderr pipe", err.Error())
 		return
 	}
 
-	// Use the hostname as the resource ID in state.
+	if err := session.Shell(); err != nil {
+		resp.Diagnostics.AddError("Failed to start remote shell", err.Error())
+		return
+	}
+
+	// Helper to send commands and collect output
+	send := func(cmd string) error {
+		_, err := fmt.Fprintf(stdin, "%s\n", cmd)
+		return err
+	}
+	var output string
+	go func() {
+		scanner := bufio.NewScanner(io.MultiReader(stdout, stderr))
+		for scanner.Scan() {
+			line := scanner.Text()
+			output += line + "\n"
+		}
+	}()
+
+	// Sequence of commands
+	if err := send("enable"); err != nil { /* handle */
+	}
+	if err := send("configure terminal"); err != nil { /* handle */
+	}
+	if err := send(fmt.Sprintf("sys name %s", plan.Hostname.ValueString())); err != nil { /* handle */
+	}
+	if err := send("exit"); err != nil { /* handle */
+	}
+	if err := send("save config"); err != nil { /* handle */
+	}
+	if err := send("exit"); err != nil { /* handle */
+	}
+	if err := session.Wait(); err != nil {
+		resp.Diagnostics.AddError(
+			"SSH command sequence failed",
+			fmt.Sprintf("error: %s\noutput:\n%s", err, output),
+		)
+		return
+	}
+
+	// Enregistrer l’état
 	plan.ID = plan.Hostname
 	diags = resp.State.Set(ctx, plan)
 	resp.Diagnostics.Append(diags...)
