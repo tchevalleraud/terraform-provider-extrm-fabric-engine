@@ -130,7 +130,6 @@ func (r *FabricEngineHostnameResource) Create(
 		}
 	}()
 
-	// Sequence of commands
 	// Sequence of commands with error handling
 	if err := send("enable"); err != nil {
 		resp.Diagnostics.AddError(
@@ -153,7 +152,7 @@ func (r *FabricEngineHostnameResource) Create(
 		)
 		return
 	}
-	// Quit configuration mode
+	// Exit configuration mode
 	if err := send("exit"); err != nil {
 		resp.Diagnostics.AddError(
 			"SSH command failed",
@@ -177,6 +176,7 @@ func (r *FabricEngineHostnameResource) Create(
 		)
 		return
 	}
+	// Wait for the session to end; ignore the "exited without exit status" error
 	if err := session.Wait(); err != nil {
 		if !strings.Contains(err.Error(), "exited without exit status") {
 			resp.Diagnostics.AddError(
@@ -187,7 +187,7 @@ func (r *FabricEngineHostnameResource) Create(
 		}
 	}
 
-	// Enregistrer l’état
+	// Record the state
 	plan.ID = plan.Hostname
 	diags = resp.State.Set(ctx, plan)
 	resp.Diagnostics.Append(diags...)
@@ -232,14 +232,13 @@ func (r *FabricEngineHostnameResource) Read(
 		return
 	}
 
-	// Parse the SysName from the command output (the Ansible collection uses a similar pattern:contentReference[oaicite:3]{index=3}).
+	// Parse the SysName from the command output.
 	re := regexp.MustCompile(`SysName\s+:\s+(\S+)`)
 	matches := re.FindStringSubmatch(string(output))
 	if len(matches) == 2 {
 		state.Hostname = types.StringValue(matches[1])
 		state.ID = state.Hostname
 	} else {
-		// If parsing fails, keep the previous state.
 		resp.Diagnostics.AddWarning("Hostname not found", "Could not parse SysName from show sys-info output")
 	}
 
@@ -267,20 +266,21 @@ func (r *FabricEngineHostnameResource) Update(
 		return
 	}
 
-	// Connect and set the new hostname.
-	config := &ssh.ClientConfig{
+	// SSH client configuration
+	cfg := &ssh.ClientConfig{
 		User:            r.client.Username,
 		Auth:            []ssh.AuthMethod{ssh.Password(r.client.Password)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 	address := fmt.Sprintf("%s:%d", r.client.Host, r.client.Port)
-	client, err := ssh.Dial("tcp", address, config)
+	client, err := ssh.Dial("tcp", address, cfg)
 	if err != nil {
 		resp.Diagnostics.AddError("SSH connection error", err.Error())
 		return
 	}
 	defer client.Close()
 
+	// Interactive shell
 	session, err := client.NewSession()
 	if err != nil {
 		resp.Diagnostics.AddError("Cannot create SSH session", err.Error())
@@ -288,10 +288,72 @@ func (r *FabricEngineHostnameResource) Update(
 	}
 	defer session.Close()
 
-	cmd := fmt.Sprintf("sys name %s", plan.Hostname.ValueString())
-	if err := session.Run(cmd); err != nil {
-		resp.Diagnostics.AddError("Command execution failed", err.Error())
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		resp.Diagnostics.AddError("Cannot get stdin pipe", err.Error())
 		return
+	}
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		resp.Diagnostics.AddError("Cannot get stdout pipe", err.Error())
+		return
+	}
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		resp.Diagnostics.AddError("Cannot get stderr pipe", err.Error())
+		return
+	}
+
+	if err := session.Shell(); err != nil {
+		resp.Diagnostics.AddError("Failed to start remote shell", err.Error())
+		return
+	}
+
+	send := func(cmd string) error {
+		_, err := fmt.Fprintf(stdin, "%s\n", cmd)
+		return err
+	}
+	var output string
+	go func() {
+		scanner := bufio.NewScanner(io.MultiReader(stdout, stderr))
+		for scanner.Scan() {
+			line := scanner.Text()
+			output += line + "\n"
+		}
+	}()
+
+	if err := send("enable"); err != nil {
+		resp.Diagnostics.AddError("SSH command failed", fmt.Sprintf("failed to send 'enable': %s\noutput:\n%s", err, output))
+		return
+	}
+	if err := send("configure terminal"); err != nil {
+		resp.Diagnostics.AddError("SSH command failed", fmt.Sprintf("failed to send 'configure terminal': %s\noutput:\n%s", err, output))
+		return
+	}
+	if err := send(fmt.Sprintf("sys name %s", plan.Hostname.ValueString())); err != nil {
+		resp.Diagnostics.AddError("SSH command failed", fmt.Sprintf("failed to set hostname: %s\noutput:\n%s", err, output))
+		return
+	}
+	if err := send("exit"); err != nil {
+		resp.Diagnostics.AddError("SSH command failed", fmt.Sprintf("failed to exit configuration mode: %s\noutput:\n%s", err, output))
+		return
+	}
+	if err := send("save config"); err != nil {
+		resp.Diagnostics.AddError("SSH command failed", fmt.Sprintf("failed to save configuration: %s\noutput:\n%s", err, output))
+		return
+	}
+	if err := send("exit"); err != nil {
+		resp.Diagnostics.AddError("SSH command failed", fmt.Sprintf("failed to exit session: %s\noutput:\n%s", err, output))
+		return
+	}
+	if err := session.Wait(); err != nil {
+		if !strings.Contains(err.Error(), "exited without exit status") {
+			resp.Diagnostics.AddError(
+				"SSH command sequence failed",
+				fmt.Sprintf("error: %s\noutput:\n%s", err, output),
+			)
+			return
+		}
 	}
 
 	diags = resp.State.Set(ctx, plan)
@@ -302,22 +364,21 @@ func (r *FabricEngineHostnameResource) Update(
 func (r *FabricEngineHostnameResource) Delete(
 	ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 
-	// Connect via SSH.
-	config := &ssh.ClientConfig{
+	// SSH client configuration
+	cfg := &ssh.ClientConfig{
 		User:            r.client.Username,
 		Auth:            []ssh.AuthMethod{ssh.Password(r.client.Password)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 	address := fmt.Sprintf("%s:%d", r.client.Host, r.client.Port)
-	client, err := ssh.Dial("tcp", address, config)
+	client, err := ssh.Dial("tcp", address, cfg)
 	if err != nil {
 		resp.Diagnostics.AddError("SSH connection error", err.Error())
 		return
 	}
 	defer client.Close()
 
-	// Set the hostname back to a generic value. You can later replace "TEST-FABRIC-ENGINE"
-	// with the actual model of your device.
+	// Interactive shell
 	session, err := client.NewSession()
 	if err != nil {
 		resp.Diagnostics.AddError("Cannot create SSH session", err.Error())
@@ -325,9 +386,72 @@ func (r *FabricEngineHostnameResource) Delete(
 	}
 	defer session.Close()
 
-	if err := session.Run("sys name TEST-FABRIC-ENGINE"); err != nil {
-		resp.Diagnostics.AddError("Failed to reset hostname", err.Error())
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		resp.Diagnostics.AddError("Cannot get stdin pipe", err.Error())
 		return
+	}
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		resp.Diagnostics.AddError("Cannot get stdout pipe", err.Error())
+		return
+	}
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		resp.Diagnostics.AddError("Cannot get stderr pipe", err.Error())
+		return
+	}
+
+	if err := session.Shell(); err != nil {
+		resp.Diagnostics.AddError("Failed to start remote shell", err.Error())
+		return
+	}
+
+	send := func(cmd string) error {
+		_, err := fmt.Fprintf(stdin, "%s\n", cmd)
+		return err
+	}
+	var output string
+	go func() {
+		scanner := bufio.NewScanner(io.MultiReader(stdout, stderr))
+		for scanner.Scan() {
+			line := scanner.Text()
+			output += line + "\n"
+		}
+	}()
+
+	if err := send("enable"); err != nil {
+		resp.Diagnostics.AddError("SSH command failed", fmt.Sprintf("failed to send 'enable': %s\noutput:\n%s", err, output))
+		return
+	}
+	if err := send("configure terminal"); err != nil {
+		resp.Diagnostics.AddError("SSH command failed", fmt.Sprintf("failed to send 'configure terminal': %s\noutput:\n%s", err, output))
+		return
+	}
+	if err := send("sys name TEST-FABRIC-ENGINE"); err != nil {
+		resp.Diagnostics.AddError("SSH command failed", fmt.Sprintf("failed to reset hostname: %s\noutput:\n%s", err, output))
+		return
+	}
+	if err := send("exit"); err != nil {
+		resp.Diagnostics.AddError("SSH command failed", fmt.Sprintf("failed to exit configuration mode: %s\noutput:\n%s", err, output))
+		return
+	}
+	if err := send("save config"); err != nil {
+		resp.Diagnostics.AddError("SSH command failed", fmt.Sprintf("failed to save configuration: %s\noutput:\n%s", err, output))
+		return
+	}
+	if err := send("exit"); err != nil {
+		resp.Diagnostics.AddError("SSH command failed", fmt.Sprintf("failed to exit session: %s\noutput:\n%s", err, output))
+		return
+	}
+	if err := session.Wait(); err != nil {
+		if !strings.Contains(err.Error(), "exited without exit status") {
+			resp.Diagnostics.AddError(
+				"SSH command sequence failed",
+				fmt.Sprintf("error: %s\noutput:\n%s", err, output),
+			)
+			return
+		}
 	}
 
 	// Remove the resource from Terraform state.
