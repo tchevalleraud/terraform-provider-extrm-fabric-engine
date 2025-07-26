@@ -130,17 +130,51 @@ func (r *FabricEngineHostnameResource) Create(
 	}()
 
 	// Sequence of commands
-	if err := send("enable"); err != nil { /* handle */
+	// Sequence of commands with error handling
+	if err := send("enable"); err != nil {
+		resp.Diagnostics.AddError(
+			"SSH command failed",
+			fmt.Sprintf("failed to send 'enable': %s\noutput:\n%s", err, output),
+		)
+		return
 	}
-	if err := send("configure terminal"); err != nil { /* handle */
+	if err := send("configure terminal"); err != nil {
+		resp.Diagnostics.AddError(
+			"SSH command failed",
+			fmt.Sprintf("failed to send 'configure terminal': %s\noutput:\n%s", err, output),
+		)
+		return
 	}
-	if err := send(fmt.Sprintf("sys name %s", plan.Hostname.ValueString())); err != nil { /* handle */
+	if err := send(fmt.Sprintf("sys name %s", plan.Hostname.ValueString())); err != nil {
+		resp.Diagnostics.AddError(
+			"SSH command failed",
+			fmt.Sprintf("failed to set hostname: %s\noutput:\n%s", err, output),
+		)
+		return
 	}
-	if err := send("exit"); err != nil { /* handle */
+	// Quit configuration mode
+	if err := send("exit"); err != nil {
+		resp.Diagnostics.AddError(
+			"SSH command failed",
+			fmt.Sprintf("failed to exit configuration mode: %s\noutput:\n%s", err, output),
+		)
+		return
 	}
-	if err := send("save config"); err != nil { /* handle */
+	// Save the configuration:contentReference[oaicite:0]{index=0}
+	if err := send("save config"); err != nil {
+		resp.Diagnostics.AddError(
+			"SSH command failed",
+			fmt.Sprintf("failed to save configuration: %s\noutput:\n%s", err, output),
+		)
+		return
 	}
-	if err := send("exit"); err != nil { /* handle */
+	// Exit the CLI session
+	if err := send("exit"); err != nil {
+		resp.Diagnostics.AddError(
+			"SSH command failed",
+			fmt.Sprintf("failed to exit session: %s\noutput:\n%s", err, output),
+		)
+		return
 	}
 	if err := session.Wait(); err != nil {
 		resp.Diagnostics.AddError(
