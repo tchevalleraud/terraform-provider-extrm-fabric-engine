@@ -420,6 +420,7 @@ func (r *FabricEngineHostnameResource) Update(
 		}
 	}
 
+	state.ID = plan.Hostname
 	diags = resp.State.Set(ctx, plan)
 	resp.Diagnostics.Append(diags...)
 }
