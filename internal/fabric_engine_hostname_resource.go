@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -177,11 +178,13 @@ func (r *FabricEngineHostnameResource) Create(
 		return
 	}
 	if err := session.Wait(); err != nil {
-		resp.Diagnostics.AddError(
-			"SSH command sequence failed",
-			fmt.Sprintf("error: %s\noutput:\n%s", err, output),
-		)
-		return
+		if !strings.Contains(err.Error(), "exited without exit status") {
+			resp.Diagnostics.AddError(
+				"SSH command sequence failed",
+				fmt.Sprintf("error: %s\noutput:\n%s", err, output),
+			)
+			return
+		}
 	}
 
 	// Enregistrer l’état
