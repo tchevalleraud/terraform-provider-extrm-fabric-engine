@@ -246,6 +246,11 @@ func (r *FabricEngineHostnameResource) Read(
 		return
 	}
 
+	// Helper to send commands and collect output
+	send := func(cmd string) error {
+		_, err := fmt.Fprintf(stdin, "%s\n", cmd)
+		return err
+	}
 	var output string
 	go func() {
 		scanner := bufio.NewScanner(io.MultiReader(stdout, stderr))
@@ -255,24 +260,37 @@ func (r *FabricEngineHostnameResource) Read(
 		}
 	}()
 
-	send := func(cmd string) error {
-		_, err := fmt.Fprintf(stdin, "%s\n", cmd)
-		return err
-	}
-
+	// Sequence of commands with error handling
 	if err := send("enable"); err != nil {
-		resp.Diagnostics.AddError("SSH command failed", "enable failed: "+err.Error())
+		resp.Diagnostics.AddError(
+			"SSH command failed",
+			fmt.Sprintf("failed to send 'enable': %s\noutput:\n%s", err, output),
+		)
 		return
 	}
-	if err := send("show sys-info"); err != nil {
-		resp.Diagnostics.AddError("SSH command failed", "show sys-info failed: "+err.Error())
+	if err := send("terminal more disable"); err != nil {
+		resp.Diagnostics.AddError(
+			"SSH command failed",
+			fmt.Sprintf("failed to send 'terminal more disable': %s\noutput:\n%s", err, output),
+		)
+		return
+	}
+	if err := send("show sys-info | include SysName"); err != nil {
+		resp.Diagnostics.AddError(
+			"SSH command failed",
+			fmt.Sprintf("failed to send 'show sys-info | include SysName': %s\noutput:\n%s", err, output),
+		)
 		return
 	}
 	if err := send("exit"); err != nil {
-		resp.Diagnostics.AddError("SSH command failed", "exit failed: "+err.Error())
+		resp.Diagnostics.AddError(
+			"SSH command failed",
+			fmt.Sprintf("failed to send 'exit': %s\noutput:\n%s", err, output),
+		)
 		return
 	}
 
+	// Wait for the session to end; ignore the "exited without exit status" error
 	if err := session.Wait(); err != nil {
 		if !strings.Contains(err.Error(), "exited without exit status") {
 			resp.Diagnostics.AddError("SSH session wait error", err.Error())
