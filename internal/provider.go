@@ -6,6 +6,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/ephemeral"
 	"github.com/hashicorp/terraform-plugin-framework/function"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"os"
 
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
@@ -22,9 +23,9 @@ type ExtrmFabricEngineProvider struct {
 
 type ExtrmFabricEngineModel struct {
 	Host     types.String `tfsdk:"host"`
-	Port     types.Int    `tfsdk:"port"`
-	Username types.string `tfsdk:"username"`
-	Password types.string `tfsdk:"password"`
+	Port     types.Int32  `tfsdk:"port"`
+	Username types.String `tfsdk:"username"`
+	Password types.String `tfsdk:"password"`
 }
 
 type ExtrmFabricEngineClient struct {
@@ -72,7 +73,96 @@ func (p *ExtrmFabricEngineProvider) Configure(ctx context.Context, req provider.
 		return
 	}
 
-	// Configuration values @TODO
+	// HOST
+	var host string
+	if config.Host.IsUnknown() {
+		resp.Diagnostics.AddWarning(
+			"Unable to create client",
+			"Connot use unknown value as host")
+		return
+	}
+
+	if config.Host.IsNull() {
+		host = os.Getenv("EXTRM_FE_HOST")
+	} else {
+		host = config.Host.ValueString()
+	}
+
+	if host == "" {
+		resp.Diagnostics.AddError(
+			"Unable to find host",
+			"Host cannot be an empty string")
+		return
+	}
+
+	// PORT
+	var port int32
+	if config.Port.IsUnknown() {
+		resp.Diagnostics.AddWarning(
+			"Unable to create client",
+			"Connot use unknown value as port")
+		return
+	}
+
+	if config.Port.IsNull() {
+		resp.Diagnostics.AddError(
+			"Unable to find port",
+			"Port cannot be an null integer")
+		return
+	} else {
+		port = config.Port.ValueInt32()
+	}
+
+	if port == 0 {
+		resp.Diagnostics.AddError(
+			"Unable to find port",
+			"Port cannot be an empty integer")
+		return
+	}
+
+	// Username
+	var username string
+	if config.Username.IsUnknown() {
+		resp.Diagnostics.AddWarning(
+			"Unable to create client",
+			"Connot use unknown value as username")
+		return
+	}
+
+	if config.Username.IsNull() {
+		username = os.Getenv("EXTRM_FE_USERNAME")
+	} else {
+		username = config.Username.ValueString()
+	}
+
+	if username == "" {
+		resp.Diagnostics.AddError(
+			"Unable to find host",
+			"Username cannot be an empty string")
+		return
+	}
+
+	// Username
+	var password string
+	if config.Password.IsUnknown() {
+		resp.Diagnostics.AddWarning(
+			"Unable to create client",
+			"Connot use unknown value as password")
+		return
+	}
+
+	if config.Password.IsNull() {
+		password = os.Getenv("EXTRM_FE_PASSWORD")
+	} else {
+		password = config.Password.ValueString()
+	}
+
+	if password == "" {
+		resp.Diagnostics.AddError(
+			"Unable to find host",
+			"Password cannot be an empty string")
+		return
+	}
 
 	client := &ExtrmFabricEngineClient{
 		Host:     host,
