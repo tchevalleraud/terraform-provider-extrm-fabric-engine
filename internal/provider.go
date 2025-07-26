@@ -2,13 +2,19 @@ package provider
 
 import (
 	"context"
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/ephemeral"
+	"github.com/hashicorp/terraform-plugin-framework/function"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
 
-	"github.com/hashicorp/terraform-plugin-framework-validators/int32validator"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
-	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
+
+var _ provider.Provider = &ExtrmFabricEngineProvider{}
+var _ provider.ProviderWithFunctions = &ExtrmFabricEngineProvider{}
+var _ provider.ProviderWithEphemeralResources = &ExtrmFabricEngineProvider{}
 
 type ExtrmFabricEngineProvider struct {
 	version string
@@ -16,9 +22,16 @@ type ExtrmFabricEngineProvider struct {
 
 type ExtrmFabricEngineModel struct {
 	Host     types.String `tfsdk:"host"`
+	Port     types.Int    `tfsdk:"port"`
 	Username types.string `tfsdk:"username"`
 	Password types.string `tfsdk:"password"`
-	Port     types.Int32  `tfsdk:"port"`
+}
+
+type ExtrmFabricEngineClient struct {
+	Host     string
+	Port     int32
+	Username string
+	Password string
 }
 
 func (p *ExtrmFabricEngineProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -31,22 +44,21 @@ func (p *ExtrmFabricEngineProvider) Schema(ctx context.Context, req provider.Sch
 		Attributes: map[string]schema.Attribute{
 			"host": schema.StringAttribute{
 				MarkdownDescription: "Host of Fabric Engine device.",
-				Required:            true,
-			},
-			"username": schema.StringAttribute{
-				MarkdownDescription: "Username for the Fabric Engine device.",
-				Required:            true,
-			},
-			"password": schema.StringAttribute{
-				MarkdownDescription: "Password for the Fabric Engine device.",
-				Required:            true,
+				Optional:            true,
 			},
 			"port": schema.Int32Attribute{
 				MarkdownDescription: "Port for the Fabric Engine device.",
 				Optional:            true,
-				Validators: []validator.Int32{
-					int32validator.Between(0, 65535),
-				},
+			},
+			"username": schema.StringAttribute{
+				MarkdownDescription: "Username for the Fabric Engine device.",
+				Optional:            true,
+				Sensitive:           true,
+			},
+			"password": schema.StringAttribute{
+				MarkdownDescription: "Password for the Fabric Engine device.",
+				Optional:            true,
+				Sensitive:           true,
 			},
 		},
 	}
@@ -61,4 +73,37 @@ func (p *ExtrmFabricEngineProvider) Configure(ctx context.Context, req provider.
 	}
 
 	// Configuration values @TODO
+
+	client := &ExtrmFabricEngineClient{
+		Host:     host,
+		Port:     port,
+		Username: username,
+		Password: password,
+	}
+	resp.DataSourceData = client
+	resp.ResourceData = client
+}
+
+func (p *ExtrmFabricEngineProvider) Resources(ctx context.Context) []func() resource.Resource {
+	return []func() resource.Resource{}
+}
+
+func (p *ExtrmFabricEngineProvider) EphemeralResources(ctx context.Context) []func() ephemeral.EphemeralResource {
+	return []func() ephemeral.EphemeralResource{}
+}
+
+func (p *ExtrmFabricEngineProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
+	return []func() datasource.DataSource{}
+}
+
+func (p *ExtrmFabricEngineProvider) Functions(ctx context.Context) []func() function.Function {
+	return []func() function.Function{}
+}
+
+func New(version string) func() provider.Provider {
+	return func() provider.Provider {
+		return &ExtrmFabricEngineProvider{
+			version: version,
+		}
+	}
 }

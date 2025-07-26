@@ -2,10 +2,7 @@ module github.com/tchevalleraud/extrm-fabric-engine
 
 go 1.23.10
 
-require (
-	github.com/hashicorp/terraform-plugin-framework v1.15.0
-	github.com/hashicorp/terraform-plugin-framework-validators v0.18.0
-)
+require github.com/hashicorp/terraform-plugin-framework v1.15.0
 
 require (
 	github.com/fatih/color v1.13.0 // indirect
