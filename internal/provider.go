@@ -175,7 +175,9 @@ func (p *ExtrmFabricEngineProvider) Configure(ctx context.Context, req provider.
 }
 
 func (p *ExtrmFabricEngineProvider) Resources(ctx context.Context) []func() resource.Resource {
-	return []func() resource.Resource{}
+	return []func() resource.Resource{
+		NewFabricEngineHostnameResource,
+	}
 }
 
 func (p *ExtrmFabricEngineProvider) EphemeralResources(ctx context.Context) []func() ephemeral.EphemeralResource {
