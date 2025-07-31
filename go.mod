@@ -3,7 +3,7 @@ module github.com/tchevalleraud/extrm-fabric-engine
 go 1.23.10
 
 require (
-	github.com/hashicorp/terraform-plugin-framework v1.15.0
+	github.com/hashicorp/terraform-plugin-framework v1.15.1
 	github.com/hashicorp/terraform-plugin-go v0.28.0
 	github.com/hashicorp/terraform-plugin-testing v1.13.2
 	golang.org/x/crypto v0.39.0
